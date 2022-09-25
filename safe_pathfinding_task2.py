@@ -25,6 +25,8 @@ def find_shortest_safe_path(start: Location, goal: Location,
     path_cost = 0
     prob_success = 1
     parent = {}
+    current_path = 0
+    
 
     # check if start or goal is below terrain threshold
     if terrain_map[goal] > terrain_threshold or terrain_map[start] > terrain_threshold:
@@ -32,61 +34,92 @@ def find_shortest_safe_path(start: Location, goal: Location,
 
     while frontier:
 
-        # pop() lowest value state and add to explored states
-        current_state = frontier.pop(
-            sort_frontier(frontier, terrain_map, goal, success_map, success_threshold))
-        events.log_visit_state(current_state, terrain_map[current_state] + h(current_state, goal, terrain_map))
-        explored.add(current_state)
+        try:
+            i, current_path = sort_frontier(frontier, terrain_map, success_map, success_threshold, parent, start, goal, current_path)
+            # pop() lowest value state and add to explored states
+            current_state = frontier.pop(i)
+            events.log_visit_state(current_state, current_path)
+            explored.add(current_state)
+        except:
+            if frontier:
+                continue
+            if path:
+                print("47 50 = ",h((47,50),goal, terrain_map))
+                print("48 51 = ",h((48,51),goal, terrain_map))
+                return path_cost, prob_success, path
+            else:
+                return None, None, None
 
+        
         # if state is goal break loop
         if current_state == goal:
-            path_cost, prob_success, path = path_finder(path, goal, start, terrain_map, parent, path_cost, success_map,prob_success, success_threshold)
-            if prob_success is not None:
+
+            if path and current_path < path_cost:
+                path_cost, prob_success, path = path_finder(path, terrain_map, start, goal, parent, path_cost, success_map, prob_success)
                 break
-                
+            elif not path:
+                path_cost, prob_success, path = path_finder(path, terrain_map, start, goal, parent, path_cost, success_map, prob_success)
+            else:
+                break
+            if not path:
+                continue
+            if prob_success < success_threshold:
+                continue
+            
+
+ 
 
         # for all adjacent states
         for i in adjacent_list(current_state, terrain_map):
-            # parent saves key and value pairs of states to create path once goal is found
-            if i not in parent.keys() and terrain_map[i] <= terrain_threshold:
-                parent[i] = current_state
-            # add state to frontier if state is not already explored and is below or equal to terrain threshold
-            if i not in explored and terrain_map[i] <= terrain_threshold:
-                frontier.append(i)
-                events.log_enqueue_state(i, terrain_map[i] + h(i, goal, terrain_map))
+            
+        # add state to frontier if state is not already explored and is below or equal to terrain threshold
+            if i not in explored and i not in frontier:
+                if terrain_map[i] <= terrain_threshold:
+                    frontier.append(i)
+                    parent[i] = current_state
+                    events.log_enqueue_state(i, terrain_map[i] + h(i, goal, terrain_map))
 
-    # if no goal is found
-    if goal not in explored:
-        return None, None, None
-    if not parent:
+            elif not frontier and parent[current_state] != i or path and parent[current_state] != i:
+                parent[i] = current_state
+                if i in explored:
+                    explored.remove(i)
+                    frontier.append(i)
+                    events.log_enqueue_state(i, terrain_map[i] + h(i, goal, terrain_map))
+            else:
+                events.log_ignore_state(i, path_cost, prob_success)
+
+
+    if prob_success < success_threshold:
         return None, None, None
 
     # output path_cost and path
     return path_cost, prob_success, path
 
 
-def path_finder(path: list, goal, start, map, parent: dict, path_cost,enemies,prob_success, success_threshold):
-    '''path_finder builds path from the key value pairs of states in parent dict. then calculates path cost'''
-    # insert goal into path list
-    path.append(goal)
+def path_finder(path: list,map, start, state, parent: dict, path_cost, enemies, prob_success):
+    '''path_finder calculates path cost and risk factor'''
+    path.clear()
+    prob_success = 1
+    path_cost = 0
+    path.append(state)
 
     while start not in path:
-        # pass the last item added to path into parent as a key to return its parent state as temp
+        
         temp = parent.get(path[-1])
-        # add temp to end of path
-        path.append(temp)
-    # reverse path list as starting state is currently the last item
-    path.reverse()
-    # once path is found calculate the total path_cost 
-    i = 0
-    while i < len(path)-1:
-        path_cost += map[path[i]] + map[path[i+1]]
-        prob_success *= 1-enemies[path[i]] / 100
-        i += 1
+        if temp not in path:
+            path.append(temp)
+        else:
+            break
     
-    if prob_success < success_threshold:
-        print("path below success threshold")
-        return None, None, None
+    path.reverse()
+
+    i = 0
+    if path:
+        while i < len(path)-1:
+            path_cost += map[path[i]] + map[path[i+1]]
+            prob_success *= 1-enemies[path[i]] / 100
+            i += 1
+
 
     return path_cost, prob_success, path
 
@@ -118,21 +151,69 @@ def adjacent_list(state: Location, terrain_map: Map):
     return adjacent_list
 
 
-def sort_frontier(frontier:list, map, goal, enemies, success):
+def sort_frontier(frontier:list, map, enemies, success, parent:dict, start, goal, current_path_cost):
     '''gets the index of the lowest cost edge in the frontier. calls h function to calculate best state to explore next'''
     num = INFINITE
+    success_num = 0
+    possible_path = []
+    current_path_cost = 0
+    prob_success = 1
     index = 0
+    lowest_path_cost = 0
+    next_state = frontier[index]
+
+    counter = 0
+    l = len(frontier)
     for i in frontier:
-        # f = g + h
         f = map[i] + h(i, goal, map)
-        probability_of_success = 1-enemies[i]/100 
-        # if f(i) is less than num get index
-        if f <= num and probability_of_success >= success:
-            num = f
+        possible_path.clear()
+        current_path_cost = 0
+        path_cost = 0
+        prob_success = 1
+        possible_path.append(i)
+        counter+=1
+
+        while start not in possible_path:
+            temp = parent.get(possible_path[-1])
+            if temp not in possible_path:
+                possible_path.append(temp)
+            else:
+                frontier.remove(i)
+                if counter == len(frontier):
+                    return index, current_path_cost
+                
+
+        
+        possible_path.reverse()
+        j = 0
+    
+        while j < len(possible_path)-1:
+            current_path_cost += map[possible_path[j]] + map[possible_path[j+1]]
+            path_cost += map[possible_path[j]] + map[possible_path[j+1]] + f
+            prob_success *= 1-enemies[possible_path[j]] / 100
+            j += 1
+
+
+        if prob_success < success:
+            frontier.remove(i)
+            
+        if path_cost < num and prob_success > success:
+            success_num = prob_success
+            num = path_cost
+            lowest_path_cost = current_path_cost
+            index = frontier.index(i)
+
+        elif path_cost == num and prob_success > success_num:
+            success_num = prob_success
+            num = path_cost
+            lowest_path_cost = current_path_cost
             index = frontier.index(i)
         else:
-            events.log_ignore_state(i, f)
-    return index
+            continue
+
+    
+
+    return index, current_path_cost
 
 
 def h(x, y: Location, map):
@@ -154,7 +235,7 @@ def h(x, y: Location, map):
     h = abs(x1-x2) + abs(y1-y2)
 
     return h * average_terrain_difficulty
-    raise NotImplementedError
+    
 
 
 @click.command(no_args_is_help=True)
@@ -173,6 +254,9 @@ def main(start: Location, goal: Location,
         python safe_pathfinding_task2.py 3,2 0,3 resources/terrain01.txt 50 resources/enemy01.txt 1.0
         python safe_pathfinding_task2.py 3,2 0,3 resources/terrain01.txt 50 resources/enemy01.txt 1.0
         python safe_pathfinding_task2.py 3,3 0,3 resources/terrain02.txt 50 resources/enemy02.txt 0.6
+        python safe_pathfinding_task2.py 3,2 0,3 resources/terrain01.txt 50 resources/enemy01.txt 0.2
+        python safe_pathfinding_task2.py 20,80 80,40 resources/terrain04.txt 200 resources/enemy04.txt 0.5
+        python safe_pathfinding_task2.py 4,1 0,3 resources/terrain03.txt 50 resources/enemy03.txt 0.5
     """
     path = find_shortest_safe_path(start, goal, terrain_map, terrain_threshold, success_map, success_threshold)
     if path:
